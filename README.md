@@ -10,7 +10,7 @@ I give it a try on a reduced 5 x 4 board, which has [1,706,255](https://tromp.gi
 
 Parameters can be changed directly from the first few lines of  ```ql_connect_four.jl```. The code should work with boards of sizes 4x4:8, 5x4:7, 6x4:7, 7x4:5, and 8x4. 
 
-Run ```julia --check-bounds=no ql_connect_four.jl``` in terminal. The Q-learning agent will train with self-play. When the training phase is finished, you will be able to play against it. Sometimes the Q-learning agent will win, and some other times you will win. :-) 
+Run ```julia --check-bounds=no ql_connect_four.jl``` in terminal. The Q-learning agent will train with self-play. When the training phase is finished, you will be able to play against it.
 
 ## 2. Deep Q-learning
 
