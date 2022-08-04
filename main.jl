@@ -8,7 +8,7 @@ const last_turn = n_cols * n_rows
 
 # Q-learning hyperparameters
 Q = DefaultDict(()->zeros(Float16,n_cols)) 	# the Q matrix is a DefaultDict indexed with boards
-const n_episodes = 1*10^4					# number of self-play training matches: with 3*10^7 matches, 60% of all possible game congfigurations are reached at least once
+const n_episodes = 1*10^7					# number of self-play training matches: with 3*10^7 matches, 60% of all possible game congfigurations are reached at least once
 const alpha = Float16(0.5)					# learning rate
 const gamma = Float16(0.99)					# discount factor
 const epsilon = 1/3							# probability of exploration 
