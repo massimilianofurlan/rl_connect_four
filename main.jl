@@ -1,26 +1,14 @@
 using DataStructures
 using ProgressMeter
 
-# set board size: a regular board is 6 x 7 (too many states)
-const n_rows = 4 # regular is 6
-const n_cols = 5 # regular is 7
-
+# board sizes: a regular board is 6 x 7, existing variants are 5 x 4, 6 x 5
+const n_rows = 5 # regular is 6
+const n_cols = 4 # regular is 7
 const last_turn = n_cols * n_rows
-# number of possible game configurations given board size
-# see https://tromp.github.io/c4/c4.html 
-const n_conf = [2 5 13 35 96 267 750 2118;
-				3 18 116 741 4688 29737 189648 1216721;
-				4 58 869 12031 158911 2087325 27441956 362940958;
-				5 179 6000 161029 3945711 94910577 2265792710 54233186631;
-				6 537 38310 1706255 69763700 2818972642 112829665923 undef;
-				7 1571 235781 15835683 1044334437 69173028785 4531985219092 undef;
-				8 4587 1417322 135385909 14171315454 undef undef undef;
-				9 13343 8424616 1104642469 undef undef undef undef][n_rows,n_cols]
-
 
 # Q-learning hyperparameters
 Q = DefaultDict(()->zeros(Float16,n_cols)) 	# the Q matrix is a DefaultDict indexed with boards
-const n_episodes = 1*10^7					# number of self-play training matches: with 3*10^7 matches, 60% of all possible game congfigurations are reached at least once
+const n_episodes = 1*10^4					# number of self-play training matches: with 3*10^7 matches, 60% of all possible game congfigurations are reached at least once
 const alpha = Float16(0.5)					# learning rate
 const gamma = Float16(0.99)					# discount factor
 const epsilon = 1/3							# probability of exploration 
@@ -29,6 +17,24 @@ const epsilon = 1/3							# probability of exploration
 #const epsilon0 = 1/2
 #const beta = (0.1/epsilon0)^(1/n_episodes)	# say I want e_0 = 1/2 and e_T = 1/10
 #const epsilon = [epsilon0 * beta^episode for episode in 1:n_episodes]	
+
+
+# number of possible game configurations given board size
+# see https://tromp.github.io/c4/c4.html 
+const n_conf = [-1 -1 -1 -1 -1 -1 -1 -1;
+				-1 -1 -1 -1 -1 -1 -1 -1;
+				-1 -1 -1 -1 -1 -1 -1 -1;
+				-1 -1 -1 161029 3945711 94910577 2265792710 54233186631;
+				-1 -1 -1 1706255 69763700 2818972642 112829665923 -1;
+				-1 -1 -1 15835683 1044334437 69173028785 4531985219092 -1;
+				-1 -1 -1 135385909 14171315454 -1 -1 -1;
+				-1 -1 -1 1104642469 -1 -1 -1 -1][n_rows,n_cols]
+
+if n_conf == -1 
+	println("Board sizes not supported.")
+	exit()
+end
+
 
 # generic functions
 
@@ -218,65 +224,6 @@ function update_q(Q, alpha, gamma, board, new_board, a, reward)
 	end
 end
 
-# main functions
-
-function self_play(Q, alpha, gamma, epsilon)
-	# training self-play environment
-	pre_board = zeros(Int8, n_rows, n_cols)		# board before current player move 
-	board = zeros(Int8, n_rows, n_cols)			# current board
-	post_board = zeros(Int8, n_rows, n_cols) 	# board after current player move
-	n_disks = zeros(Int8, n_cols)				# number of disks per column
-	a, pre_a = undef, undef						# initialize curerent action and preceding player action
-	for turn in 1:last_turn
-		a = get_action(Q, board, n_disks, epsilon)					# get e-greedy action given current board
-		n_disks[a] += 1 											# store disk
-		post_board[n_disks[a],a] = Int8(1)							# update post_board (agent always plays 1:yellow)
-		if isterminal(post_board, turn)								# check if current player won
-			# current player gets a 100 reward
-			update_q(Q, alpha, 0.0, board, post_board, a, Float16(100.0))
-			# preceding player gets a -100 reward
-			post_board = turn_board(post_board)						# preceding player POV
-			update_q(Q, alpha, gamma, pre_board, post_board, pre_a, Float16(-100.0))
-			# end of game
-			break
-		end 
-		# non-winning move gives 0 reward: note, sequential moves (s_i, a_i) -> (s_j, a_j) -> (s'_i, ...)
-		post_board = turn_board(post_board)							# preceding player POV
-		turn != 1 && update_q(Q, alpha, gamma, pre_board, post_board, pre_a, Float16(0.0))
-		# transition game to next player environment
-		pre_a = copy(a)
-		pre_board = copy(board)
-		board = copy(post_board)
-	end
-	return Q
-end
-
-function training_session(Q)
-	println("\nI am training ... ")
-	# training sessions
-	progress = Progress(n_episodes, color=:white, showspeed=true)
-	@time for episode in 1:n_episodes
-		# self-play training
-		Q = self_play(Q, alpha, gamma, epsilon)
-		next!(progress,; showvalues = [(:episode,episode),(:known_boards, length(Q)*2)]) # length(Q)*2 because each board has its flipped version
-		# epsilon decays according to e_t = beta * e_{t-1} each episode
-		#global Q = self_play(Q, alpha, gamma, epsilon[episode])
-		#next!(progress,; showvalues = [(:episode,episode),(:epsilon,epsilon[episode]),(:known_boards, length(Q)*2)])
-	end
-	return Q
-end
-
-# begin training 
-run(`clear`)
-while true 
-	global Q = training_session(Q)
-	println("\nThe agent has visited (at least once)",round(length(Q)*2/n_conf,digits=2)*100, "% of the possible game configurations.")
-	print("Press [y] to train it for $n_episodes additional self-play matches, or [any other key] to play against it: ")
-	readline() == "y" || break
-end
-
-# end training
-
 # gameplay functions
 
 function get_stats(board, Q, n_disks)
@@ -338,16 +285,82 @@ function play_against_agent(Q; players = ["AGENT","HUMAN"])
 	end
 end
 
-# begin gamplay
+# main functions
 
-players = ["AGENT","HUMAN"]					# first match, agent moves first
-while true
-	global players
-	play_against_agent(Q; players = players)
-	print("Want to play again? [y,n]: ")	# default is y
-	readline() != "n" || break				# exit game if 'n', play again otherwise
-	players = players[end:-1:1]				# alternating first mover
+function self_play(Q, alpha, gamma, epsilon)
+	# training self-play environment
+	pre_board = zeros(Int8, n_rows, n_cols)		# board before current player move 
+	board = zeros(Int8, n_rows, n_cols)			# current board
+	post_board = zeros(Int8, n_rows, n_cols) 	# board after current player move
+	n_disks = zeros(Int8, n_cols)				# number of disks per column
+	a, pre_a = undef, undef						# initialize curerent action and preceding player action
+	for turn in 1:last_turn
+		a = get_action(Q, board, n_disks, epsilon)					# get e-greedy action given current board
+		n_disks[a] += 1 											# store disk
+		post_board[n_disks[a],a] = Int8(1)							# update post_board (agent always plays 1:yellow)
+		if isterminal(post_board, turn)								# check if current player won
+			# current player gets a 100 reward
+			update_q(Q, alpha, 0.0, board, post_board, a, Float16(100.0))
+			# preceding player gets a -100 reward
+			post_board = turn_board(post_board)						# preceding player POV
+			update_q(Q, alpha, gamma, pre_board, post_board, pre_a, Float16(-100.0))
+			# end of game
+			break
+		end 
+		# non-winning move gives 0 reward: note, sequential moves (s_i, a_i) -> (s_j, a_j) -> (s'_i, ...)
+		post_board = turn_board(post_board)							# preceding player POV
+		turn != 1 && update_q(Q, alpha, gamma, pre_board, post_board, pre_a, Float16(0.0))
+		# transition game to next player environment
+		pre_a = copy(a)
+		pre_board = copy(board)
+		board = copy(post_board)
+	end
+	return Q
 end
+
+function training_session(Q)
+	println("\nI am training ... ")
+	# training sessions
+	progress = Progress(n_episodes, color=:white, showspeed=true)
+	@time for episode in 1:n_episodes
+		# self-play training
+		Q = self_play(Q, alpha, gamma, epsilon)
+		next!(progress,; showvalues = [(:episode,episode),(:known_boards, length(Q)*2)]) # length(Q)*2 because each board has its flipped version
+		# epsilon decays according to e_t = beta * e_{t-1} each episode
+		#global Q = self_play(Q, alpha, gamma, epsilon[episode])
+		#next!(progress,; showvalues = [(:episode,episode),(:epsilon,epsilon[episode]),(:known_boards, length(Q)*2)])
+	end
+	return Q
+end
+
+
+# begin execution 
+run(`clear`)
+println("\nBoard: $n_rows x $n_cols; \t Game configurations $n_conf")
+while true 
+	global Q = training_session(Q)
+	println("\nThe agent has visited (at least once) ",round(length(Q)*2/n_conf,digits=2)*100, "% of the possible game configurations.")
+	print("Press [y] to train it for $n_episodes additional self-play matches, or [any other key] to play against it: ")
+	if readline() != "y"
+		players = ["AGENT","HUMAN"]					# first match, agent moves first
+		while true
+			play_against_agent(Q; players = players)
+			print("Press [y] to play again, [n] to get back to the training environment, or [q] to quit: ")	# default is y
+			k = readline()
+			if k == "y"
+				players = players[end:-1:1]			# alternating first mover
+			elseif k == "q"
+				exit()
+			else 
+				break								# [n] is default
+			end
+		end
+	end
+end
+
+# end execution
+
+
 
 # end gameplay
 
