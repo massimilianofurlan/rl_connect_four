@@ -2,19 +2,33 @@ using DataStructures
 using ProgressMeter
 
 # set board size: a regular board is 6 x 7 (too many states)
-const n_cols = 7 # regular is 7
-const n_rows = 6 # regular is 6
+const n_rows = 4 # regular is 6
+const n_cols = 5 # regular is 7
+
 const last_turn = n_cols * n_rows
+# number of possible game configurations given board size
+# see https://tromp.github.io/c4/c4.html 
+const n_conf = [2 5 13 35 96 267 750 2118;
+				3 18 116 741 4688 29737 189648 1216721;
+				4 58 869 12031 158911 2087325 27441956 362940958;
+				5 179 6000 161029 3945711 94910577 2265792710 54233186631;
+				6 537 38310 1706255 69763700 2818972642 112829665923 undef;
+				7 1571 235781 15835683 1044334437 69173028785 4531985219092 undef;
+				8 4587 1417322 135385909 14171315454 undef undef undef;
+				9 13343 8424616 1104642469 undef undef undef undef][n_rows,n_cols]
+
 
 # Q-learning hyperparameters
 Q = DefaultDict(()->zeros(Float16,n_cols)) 	# the Q matrix is a DefaultDict indexed with boards
-const n_episodes = 20000000					# each episode is a self-play training match
+const n_episodes = 1*10^7					# number of self-play training matches: with 3*10^7 matches, 60% of all possible game congfigurations are reached at least once
 const alpha = Float16(0.5)					# learning rate
 const gamma = Float16(0.99)					# discount factor
+const epsilon = 1/3							# probability of exploration 
+# a constant probability of exploration seems to do ok, but, if you want ...
 # exploration decay: e_t = beta * e_{t-1} for t \in 0,..,T where T = n_episodes and e_0 = epsilon0
-const epsilon0 = 1/2
-const beta = (0.1/epsilon0)^(1/n_episodes)	# I want e_T = 0.1
-const epsilon = [epsilon0 * beta^episode for episode in 1:n_episodes]	
+#const epsilon0 = 1/2
+#const beta = (0.1/epsilon0)^(1/n_episodes)	# say I want e_0 = 1/2 and e_T = 1/10
+#const epsilon = [epsilon0 * beta^episode for episode in 1:n_episodes]	
 
 # generic functions
 
@@ -37,7 +51,7 @@ function argmax_(A::AbstractArray; inds = Array{Int8,1}(undef,n_cols))
 end
 
 function get_bit_board(board)
-	# codify board using 2-bits information for each disk (0:none,1:yellow,2:red) to reduce allocations
+	# codify board using 2-bits information for each disk (0:none,1:yellow,2:red): nifty trick to reduce allocations
 	bit_board = BitMatrix(undef,n_rows*2,n_cols)		# 2x1 blocks of this array are 2-bits
 	bit_board .= false									# initially set everything to 0
 	for j in 1:n_cols	
@@ -69,7 +83,7 @@ function turn_board(board)
 end
 
 function flip_board(board)
-	# flip board around the vertical axis
+	# flip board around the vertical axis: nifty trick to reduce the state space
 	return view(board,:,n_cols:-1:1)
 end
 
@@ -135,8 +149,8 @@ function get_action(Q, board, n_disks, epsilon)
 	end
 end
 
-function update_q(Q, alpha, gamma, board, new_board, a, reward)
-	# check if board and new_board are known 
+function update_q_(Q, alpha, gamma, board, new_board, a, reward) # this is faster, but saves some redundant flipped boards
+	# check if board and new_board are known
 	bit_board = get_bit_board(board)			# use bit_boards as indeces to reduce allocations
 	bit_new_board = get_bit_board(new_board)
 	if haskey(Q,bit_new_board)
@@ -163,7 +177,43 @@ function update_q(Q, alpha, gamma, board, new_board, a, reward)
 	end
 	if reward != 0
 		# if board and new_board are unknown, both flipped and not as is, and reward != 0, partial update: Q[bit_board][a] = 0, maximum(Q[bit_new_board] = 0
-		# everything starts here: first time winning/losing this way 
+		Q[bit_board][a] = alpha * reward 
+	end 
+end
+
+function update_q(Q, alpha, gamma, board, new_board, a, reward)
+	# check if board and new_board are known 
+	bit_board = get_bit_board(board)			# use bit_boards as indeces to reduce allocations
+	bit_new_board = get_bit_board(new_board)
+	flipped_bit_board = flip_board(bit_board)	
+	flipped_bit_new_board = flip_board(bit_new_board)
+	flipped_a = (n_cols:-1:1)[a]
+
+	if haskey(Q,bit_new_board)
+		if haskey(Q,flipped_bit_board)
+			Q[flipped_bit_board][flipped_a] = (1 - alpha) * Q[flipped_bit_board][flipped_a] + alpha * (reward + gamma * maximum(Q[bit_new_board]))
+		else 
+			Q[bit_board][a] = (1 - alpha) * Q[bit_board][a] + alpha * (reward + gamma * maximum(Q[bit_new_board]))
+		end
+		return nothing
+	elseif haskey(Q,flipped_bit_new_board)
+		if haskey(Q,bit_board)
+			Q[bit_board][a] = (1 - alpha) * Q[bit_board][a] + alpha * (reward + gamma * maximum(Q[flipped_bit_new_board]))
+		else 
+			Q[flipped_bit_board][flipped_a] = (1 - alpha) * Q[flipped_bit_board][flipped_a] + alpha * (reward + gamma * maximum(Q[flipped_bit_new_board]))
+		end
+		return nothing
+	end
+
+	# if here, !haskey(Q,bit_new_board) && !haskey(Q,flipped_bit_new_board) ==  true, implying maximum(Q[bit_new_board]) = maximum(Q[flipped_bit_new_board]) = 0
+	if haskey(Q,bit_board)
+		Q[bit_board][a] = (1 - alpha) * Q[bit_board][a] + alpha * reward
+		return nothing
+	elseif haskey(Q,flipped_bit_board)
+		Q[flipped_bit_board][flipped_a] = (1 - alpha) * Q[flipped_bit_board][flipped_a]  + alpha * reward
+		return nothing
+	elseif reward != 0
+		# if here, !haskey(Q,bit_board) && !haskey(Q,flipped_bit_board) ==  true, implying Q[bit_board][a] = Q[flipped_bit_board][flipped_a] = 0
 		Q[bit_board][a] = alpha * reward 
 	end
 end
@@ -177,7 +227,6 @@ function self_play(Q, alpha, gamma, epsilon)
 	post_board = zeros(Int8, n_rows, n_cols) 	# board after current player move
 	n_disks = zeros(Int8, n_cols)				# number of disks per column
 	a, pre_a = undef, undef						# initialize curerent action and preceding player action
-	turn = 1 									# turn number
 	for turn in 1:last_turn
 		a = get_action(Q, board, n_disks, epsilon)					# get e-greedy action given current board
 		n_disks[a] += 1 											# store disk
@@ -202,19 +251,33 @@ function self_play(Q, alpha, gamma, epsilon)
 	return Q
 end
 
-# begin execution 
-
-println("Wait, I am training ... (around 15 minutes, Apple Silicon M1 Pro)")
-# training sessions
-progress = Progress(n_episodes, color=:white, showspeed=true)
-@time for episode in 1:n_episodes
-	# self-play training, epsilon decays according to e_t = beta * e_{t-1} each episode
-	global Q = self_play(Q, alpha, gamma, epsilon[episode])
-	next!(progress,; showvalues = [(:episode,episode),(:epsilon,epsilon[episode]),(:known_boards, length(Q))])
+function training_session(Q)
+	println("\nI am training ... ")
+	# training sessions
+	progress = Progress(n_episodes, color=:white, showspeed=true)
+	@time for episode in 1:n_episodes
+		# self-play training
+		Q = self_play(Q, alpha, gamma, epsilon)
+		next!(progress,; showvalues = [(:episode,episode),(:known_boards, length(Q)*2)]) # length(Q)*2 because each board has its flipped version
+		# epsilon decays according to e_t = beta * e_{t-1} each episode
+		#global Q = self_play(Q, alpha, gamma, epsilon[episode])
+		#next!(progress,; showvalues = [(:episode,episode),(:epsilon,epsilon[episode]),(:known_boards, length(Q)*2)])
+	end
+	return Q
 end
 
-print("Training finished, press enter to continue ... ")
-readline()
+# begin training 
+run(`clear`)
+while true 
+	global Q = training_session(Q)
+	println("\nThe agent knows ",round(length(Q)*2/n_conf,digits=2)*100, "% of the possible game configurations.")
+	print("Press [y] to train it for $n_episodes additional self-play matches, or [n] to play against it: ")
+	readline() == "y" || break
+end
+
+# end training
+
+# gameplay functions
 
 function get_stats(board, Q, n_disks)
 	# print some nice stats 
@@ -227,18 +290,19 @@ function get_stats(board, Q, n_disks)
 	elseif haskey(Q,flipped_bit_board)
 		println("\n\nThe agent knows this board: ", Q[flipped_bit_board][end:-1:1])
 		println("The known best action is ", get_best_actions(Q,board,n_disks))
-		println("The continuation value is ", unique(Q[flipped_bit_board][get_best_actions(Q,board,n_disks)]))
+		println("The continuation value is ", unique(Q[flipped_bit_board][end:-1:1][get_best_actions(Q,board,n_disks)]))
 	else	
 		println("\n\nThis board is unknown")
 	end
 end
 
-function play_against_agent(Q; players = ["agent","human"])
+function play_against_agent(Q; players = ["AGENT","HUMAN"])
 	# ugly function to play against the agent: one might want to use gtk...
 	board = zeros(Int8, n_rows, n_cols)
 	n_disks = zeros(Int8, n_cols)
+	n_turns = undef
 	for turn in 1:last_turn
-		if players[1] == "agent"
+		if players[1] == "AGENT"
 			run(`clear`)
 			println("Agent turn ...\n")
 			display("text/plain", board[end:-1:1,:])
@@ -263,13 +327,20 @@ function play_against_agent(Q; players = ["agent","human"])
 			human_won && break
 		end
 		players = players[end:-1:1]
+		n_turns = turn
 	end 
 	println()
 	display("text/plain", board[end:-1:1,:])
-	println("\n\n ### The ",players[1]," won ### \n")
+	if n_turns != last_turn 
+		println("\n\n ### THE ",players[1]," WON ### \n")
+	else 
+		println("\n\n ### DRAW ### \n")
+	end
 end
 
-players = ["agent","human"]					# first match, agent moves first
+# begin gamplay
+
+players = ["AGENT","HUMAN"]					# first match, agent moves first
 while true
 	global players
 	play_against_agent(Q; players = players)
@@ -278,7 +349,7 @@ while true
 	players = players[end:-1:1]				# alternating first mover
 end
 
-
+# end gameplay
 
 
 
