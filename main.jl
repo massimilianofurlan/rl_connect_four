@@ -270,8 +270,8 @@ end
 run(`clear`)
 while true 
 	global Q = training_session(Q)
-	println("\nThe agent knows ",round(length(Q)*2/n_conf,digits=2)*100, "% of the possible game configurations.")
-	print("Press [y] to train it for $n_episodes additional self-play matches, or [n] to play against it: ")
+	println("\nThe agent has visited (at least once)",round(length(Q)*2/n_conf,digits=2)*100, "% of the possible game configurations.")
+	print("Press [y] to train it for $n_episodes additional self-play matches, or [any other key] to play against it: ")
 	readline() == "y" || break
 end
 
